@@ -1117,6 +1117,52 @@ HISTORICAL_ASSIGNEE_ALIASES = {
 }
 
 
+def _nonspawnable_assignee_allowlist() -> frozenset:
+    """Canonicalised ``kanban.nonspawnable_assignee_allowlist`` (empty = strict).
+
+    Control-plane lanes pulled via ``claim_task`` rather than spawned as Hermes
+    profiles are declared here so the nonspawnable warning and diagnostic stay
+    silent for them — the escape hatch PR #74548 was missing. Mirrors the
+    ``kanban.dispatch_profiles`` reader: list or comma-separated string,
+    fail-open to empty (strict) when the config cannot be read.
+    """
+    try:
+        from hermes_cli.config import load_config_readonly
+        from hermes_cli.profiles import normalize_profile_name
+        raw = (load_config_readonly() or {}).get("kanban", {}).get(
+            "nonspawnable_assignee_allowlist")
+    except Exception:
+        return frozenset()
+    if raw is None:
+        return frozenset()
+    names = [str(n) for n in raw] if isinstance(raw, (list, tuple)) else str(raw).split(",")
+    allowed = set()
+    for n in names:
+        try:
+            allowed.add(normalize_profile_name(n))
+        except ValueError:
+            continue
+    return frozenset(allowed)
+
+
+def _assignee_spawnable(assignee: Optional[str]) -> Optional[bool]:
+    """``True`` iff *assignee* names a real Hermes profile.
+
+    ``None`` when *assignee* is empty (unassigned — a separate bucket) or when
+    profile introspection is unavailable (fail open, legacy behavior).
+    """
+    if not assignee or not str(assignee).strip():
+        return None
+    try:
+        from hermes_cli.profiles import profile_exists
+    except Exception:
+        return None
+    try:
+        return bool(profile_exists(assignee))
+    except Exception:
+        return None
+
+
 def _canonical_assignee(assignee: Optional[str]) -> Optional[str]:
     """Lowercase-assignee normalization for Kanban rows (dashboard/CLI parity).
 
@@ -1293,7 +1339,27 @@ def create_task(
     completion_contract = validate_contract(completion_contract)
     model_override, provider_override = _validate_model_override(model_override, provider_override)
     reasoning_effort = normalize_reasoning_effort(reasoning_effort)
+    try:
+        from hermes_cli.profiles import normalize_profile_name as _norm_pre_alias
+        _pre_alias = _norm_pre_alias(assignee) if assignee is not None else None
+    except Exception:
+        _pre_alias = None
     assignee = _canonical_assignee(assignee)
+    # Aliases above are already migrated. Any other assignee that names no real
+    # profile stays creatable — control-plane lanes pull via claim_task — but is
+    # loudly warned (logger.warning, never a refusal) unless the lane is
+    # declared in kanban.nonspawnable_assignee_allowlist. Failing loud here is
+    # what #99284 asks for; the allowlist is what #74548 was missing.
+    migrated_from = _pre_alias if _pre_alias in HISTORICAL_ASSIGNEE_ALIASES else None
+    not_a_profile = _assignee_spawnable(assignee) is False
+    if not_a_profile and migrated_from is None and assignee not in _nonspawnable_assignee_allowlist():
+        _log.warning(
+            "kanban create_task: assignee %r is not a Hermes profile — "
+            "the task will never spawn via the dispatcher "
+            "(skipped_nonspawnable). Fix the assignee or run a worker "
+            "that claims this lane explicitly.",
+            assignee,
+        )
     if not title or not title.strip():
         raise ValueError("title is required")
     if initial_status not in VALID_INITIAL_STATUSES:
@@ -1391,6 +1457,8 @@ def create_task(
                     "created",
                     {
                         "assignee": assignee,
+                        "assignee_migrated_from": migrated_from,
+                        "assignee_not_a_profile": True if not_a_profile else None,
                         "status": task_status,
                         "parents": list(parents),
                         "creator_task_id": creator_task_id,

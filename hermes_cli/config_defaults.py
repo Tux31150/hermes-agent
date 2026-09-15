@@ -1791,6 +1791,14 @@ DEFAULT_CONFIG = {
         # root profile named "default", so on a shared kanban.db every home can otherwise claim
         # default-assigned cards.
         "dispatch_profiles": None,
+        # Control-plane lane mute for the nonspawnable-assignee signal (#101015, #74548):
+        # assignee names that are lanes pulled via claim_task rather than Hermes
+        # profiles (list or comma-separated string). Listed names skip both the
+        # create_task warning and the nonspawnable_assignee diagnostic. None or
+        # empty = strict (every non-profile assignee is reported). Without this
+        # escape hatch the signal would tell operators to break healthy lanes —
+        # exactly what got PR #74548 rejected.
+        "nonspawnable_assignee_allowlist": None,
         # Auto-run the decomposer on Triage tasks every tick. False = manual via `hermes kanban
         # decompose <id>` or the dashboard's Decompose button.
         "auto_decompose": True,

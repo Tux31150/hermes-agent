@@ -678,6 +678,32 @@ def _rule_stranded_in_ready(task, events, runs, now, cfg) -> list[Diagnostic]:
     )]
 
 
+def _nonspawnable_allowlisted(cfg: dict, assignee: str) -> bool:
+    """True when *assignee* is declared in ``kanban.nonspawnable_assignee_allowlist``.
+
+    Same normalisation as the ``create_task`` side so both signals agree on
+    which lanes are known control-plane consumers (``claim_task`` pullers).
+    Unset/empty/misconfigured = strict (False).
+    """
+    kanban_cfg = (cfg or {}).get("kanban") or {}
+    raw = kanban_cfg.get("nonspawnable_assignee_allowlist")
+    if raw is None:
+        return False
+    try:
+        from hermes_cli.profiles import normalize_profile_name
+        canon = normalize_profile_name(assignee)
+    except Exception:
+        return False
+    names = [str(n) for n in raw] if isinstance(raw, (list, tuple)) else str(raw).split(",")
+    for n in names:
+        try:
+            if normalize_profile_name(n) == canon:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def _rule_nonspawnable_assignee(task, events, runs, now, cfg) -> list[Diagnostic]:
     """Assignee names no Hermes profile — the dispatcher will never spawn it.
 
@@ -693,6 +719,8 @@ def _rule_nonspawnable_assignee(task, events, runs, now, cfg) -> list[Diagnostic
         return []
     assignee = _task_field(task, "assignee") or ""
     if not assignee.strip():
+        return []
+    if _nonspawnable_allowlisted(cfg, assignee):
         return []
     try:
         from hermes_cli.profiles import profile_exists
