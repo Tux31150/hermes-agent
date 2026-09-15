@@ -678,6 +678,52 @@ def _rule_stranded_in_ready(task, events, runs, now, cfg) -> list[Diagnostic]:
     )]
 
 
+def _rule_nonspawnable_assignee(task, events, runs, now, cfg) -> list[Diagnostic]:
+    """Assignee names no Hermes profile — the dispatcher will never spawn it.
+
+    Unlike ``_rule_stranded_in_ready`` (age-based, 30 min), this fires
+    immediately on any non-terminated task so a card with a dead assignee
+    stays visible from second zero instead of failing silently in
+    ``skipped_nonspawnable``. Fail-open when profile introspection is
+    unavailable. Control-plane lanes that pull via ``claim_task`` also match
+    here; they are muted separately through
+    ``kanban.nonspawnable_assignee_allowlist``.
+    """
+    if _task_field(task, "status") in (None, "", "done", "archived"):
+        return []
+    assignee = _task_field(task, "assignee") or ""
+    if not assignee.strip():
+        return []
+    try:
+        from hermes_cli.profiles import profile_exists
+    except Exception:
+        return []
+    try:
+        spawnable = bool(profile_exists(assignee))
+    except Exception:
+        return []
+    if spawnable:
+        return []
+    task_id = _task_field(task, "id")
+    created_at = int(_task_field(task, "created_at", default=0) or 0)
+    actions = [
+        DiagnosticAction(kind="reassign", label="Reassign to a real profile",
+                         payload={"current_assignee": assignee}, suggested=True),
+        _cli_hint("List real profiles", "hermes profile list"),
+    ]
+    return [Diagnostic(
+        kind="nonspawnable_assignee", severity="warning",
+        title=f"Assignee {assignee!r} is not a Hermes profile",
+        detail=f"This task is assigned to {assignee!r}, which matches no Hermes profile, so the "
+               f"dispatcher will never spawn a worker for it (skipped_nonspawnable). Reassign it to "
+               f"a real profile, run a worker that explicitly claims this lane, or silence known "
+               f"lanes via kanban.nonspawnable_assignee_allowlist.",
+        actions=actions,
+        first_seen_at=created_at or int(now), last_seen_at=int(now), count=1,
+        data={"assignee": assignee, "task_id": task_id},
+    )]
+
+
 # Order matters: earlier rules render first on severity ties.
 _RULES: list[RuleFn] = [
     _rule_hallucinated_cards,
@@ -689,6 +735,7 @@ _RULES: list[RuleFn] = [
     _rule_stuck_in_blocked,
     _rule_block_unblock_cycling,
     _rule_stranded_in_ready,
+    _rule_nonspawnable_assignee,
 ]
 
 
@@ -790,5 +837,6 @@ DIAGNOSTIC_KINDS = (
     "stuck_in_blocked",
     "block_unblock_cycling",
     "stranded_in_ready",
+    "nonspawnable_assignee",
 )
 # ---- END PLUGIN-COMPAT ----
