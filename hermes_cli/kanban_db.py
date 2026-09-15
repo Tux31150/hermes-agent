@@ -1105,13 +1105,30 @@ def _validate_model_override(model: Optional[str], provider: Optional[str]) -> t
     return model, provider
 
 
+# Historical ghost assignees: `emma` and `orchestrateur` were never Hermes
+# profiles, so any card created with them landed in `skipped_nonspawnable`
+# (never spawned, stuck-warn suppressed) with no signal. Migrated here — the
+# single choke point for assignee writes (create, reassign, reviewer) — so no
+# new card can land on a non-spawnable alias. Done/archived rows are never
+# rewritten; only new writes are canonicalised.
+HISTORICAL_ASSIGNEE_ALIASES = {
+    "emma": "default",
+    "orchestrateur": "default",
+}
+
+
 def _canonical_assignee(assignee: Optional[str]) -> Optional[str]:
-    """Lowercase-assignee normalization for Kanban rows (dashboard/CLI parity)."""
+    """Lowercase-assignee normalization for Kanban rows (dashboard/CLI parity).
+
+    Historical ghost assignees (``HISTORICAL_ASSIGNEE_ALIASES``) are migrated
+    to their real profile so no new card can land on a non-spawnable alias.
+    """
     if assignee is None:
         return None
     from hermes_cli.profiles import normalize_profile_name
 
-    return normalize_profile_name(assignee)
+    canon = normalize_profile_name(assignee)
+    return HISTORICAL_ASSIGNEE_ALIASES.get(canon, canon)
 
 
 def _resolve_project_link(
