@@ -82,7 +82,7 @@ def _run(outcome="completed", run_id=1, error=None):
 
 
 
-def test_stuck_in_blocked_fires_past_threshold():
+def test_stuck_in_blocked_fires_past_threshold(all_assignees_spawnable):
     now = int(time.time())
     task = _task(status="blocked")
     events = [
@@ -133,7 +133,7 @@ def test_repeated_crashes_truncates_huge_tracebacks():
 # ---------------------------------------------------------------------------
 
 
-def test_engine_works_on_sqlite_row_objects(kanban_home):
+def test_engine_works_on_sqlite_row_objects(kanban_home, all_assignees_spawnable):
     """Regression: the rule functions must handle sqlite3.Row (which
     supports mapping access but not attribute access and isn't a dict)
     as well as dataclass Task / plain dict. The API layer passes Row
