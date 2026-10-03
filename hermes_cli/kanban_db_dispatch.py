@@ -1877,6 +1877,30 @@ def configured_max_in_progress() -> Optional[int]:
     return ival if ival >= 1 else None
 
 
+def configured_max_in_progress_per_profile() -> Optional[int]:
+    """Read ``kanban.max_in_progress_per_profile`` from config, or None when
+    unset/invalid/below 1.
+
+    Mirrors :func:`configured_max_in_progress` so EVERY dispatch entry point —
+    including callers that omit the keyword (e.g. the dashboard ``POST /dispatch``
+    nudge, which only passes ``max_spawn``) — honours the operator's per-profile
+    cap instead of silently running uncapped. ``0``/invalid means "no per-profile
+    cap", which matches ``_dispatch_once_locked``'s gate (``int > 0`` enables).
+    """
+    try:
+        from hermes_cli.config import load_config_readonly
+        raw = (load_config_readonly() or {}).get("kanban", {}).get("max_in_progress_per_profile")
+    except Exception:
+        return None
+    if raw is None:
+        return None
+    try:
+        ival = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return ival if ival >= 1 else None
+
+
 def count_running_tasks(conn: sqlite3.Connection) -> int:
     """Number of tasks in ``status='running'``.
 
@@ -1973,6 +1997,13 @@ def dispatch_once(
     ``skipped_locked=True`` and writes nothing; the lock is keyed on the
     resolved DB path so unrelated boards tick in parallel.
     """
+    # A caller that omits the per-profile cap (e.g. the dashboard POST
+    # /dispatch nudge, which only passes max_spawn) must still honour the
+    # operator's kanban.max_in_progress_per_profile, not silently run
+    # uncapped. Explicitly passing a cap still wins over config.
+    if max_in_progress_per_profile is None:
+        max_in_progress_per_profile = configured_max_in_progress_per_profile()
+
     def _locked_tick() -> DispatchResult:
         return _dispatch_once_locked(
             conn,

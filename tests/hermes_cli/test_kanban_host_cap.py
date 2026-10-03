@@ -106,6 +106,25 @@ def test_configured_max_in_progress_parsing(monkeypatch):
         assert kbd.configured_max_in_progress() == expected, config
 
 
+def test_configured_max_in_progress_per_profile_parsing(monkeypatch):
+    import hermes_cli.config as cfgmod
+
+    cases = [
+        ({"kanban": {"max_in_progress_per_profile": 4}}, 4),
+        ({"kanban": {"max_in_progress_per_profile": "5"}}, 5),
+        ({"kanban": {"max_in_progress_per_profile": 0}}, None),
+        ({"kanban": {"max_in_progress_per_profile": -2}}, None),
+        ({"kanban": {"max_in_progress_per_profile": "lots"}}, None),
+        ({"kanban": {}}, None),
+        ({}, None),
+    ]
+    for config, expected in cases:
+        monkeypatch.setattr(
+            cfgmod, "load_config_readonly", lambda c=config: c
+        )
+        assert kbd.configured_max_in_progress_per_profile() == expected, config
+
+
 # ---------------------------------------------------------------------------
 # 2. max_in_progress counts running work on ALL boards (P1b)
 # ---------------------------------------------------------------------------

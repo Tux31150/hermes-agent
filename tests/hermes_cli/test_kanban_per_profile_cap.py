@@ -63,6 +63,64 @@ def test_cap_2_balances_two_profiles(isolated_kanban_home_with_profiles):
 
 
 
+def test_config_cap_inherited_when_caller_omits_param(
+    isolated_kanban_home_with_profiles, monkeypatch,
+):
+    """An entry point that omits ``max_in_progress_per_profile`` must still
+    honour the configured ``kanban.max_in_progress_per_profile``.
+
+    Contract, not snapshot: with ``max_in_progress_per_profile=1`` in config,
+    exactly one worker per assignee may spawn and the rest must be deferred to
+    ``skipped_per_profile_capped`` — no matter whether the caller passed the
+    keyword. Regression for the dashboard/desktop nudge path, which only passes
+    ``max_spawn`` and therefore silently bypassed the configured cap.
+    """
+    import hermes_cli.config as cfgmod
+
+    monkeypatch.setattr(
+        cfgmod, "load_config_readonly",
+        lambda: {"kanban": {"max_in_progress_per_profile": 1}},
+    )
+    kb = isolated_kanban_home_with_profiles
+    from hermes_cli import kanban_db_connect as kbc
+    from hermes_cli import kanban_db_dispatch as kbd
+    with kbc.connect_closing() as conn:
+        kb.create_board(slug="default", name="Test")
+        ids = [kb.create_task(conn, title=f"a{i}", assignee="alpha") for i in range(5)]
+    with kbc.connect_closing() as conn:
+        # Omit max_in_progress_per_profile exactly like the dashboard nudge does.
+        res = kbd.dispatch_once(
+            conn, spawn_fn=_fake_spawn, dry_run=True, max_spawn=8,
+        )
+    assert [s[0] for s in res.spawned] == [ids[0]]
+    assert [c[0] for c in res.skipped_per_profile_capped] == ids[1:]
+
+
+def test_config_cap_zero_preserves_opt_out(
+    isolated_kanban_home_with_profiles, monkeypatch,
+):
+    """``kanban.max_in_progress_per_profile: 0`` must stay an explicit opt-out:
+    a caller that omits the keyword inherits NO cap, matching the explicit
+    ``max_in_progress_per_profile=0`` semantics (``> 0`` enables the cap)."""
+    import hermes_cli.config as cfgmod
+
+    monkeypatch.setattr(
+        cfgmod, "load_config_readonly",
+        lambda: {"kanban": {"max_in_progress_per_profile": 0}},
+    )
+    kb = isolated_kanban_home_with_profiles
+    from hermes_cli import kanban_db_connect as kbc
+    from hermes_cli import kanban_db_dispatch as kbd
+    with kbc.connect_closing() as conn:
+        kb.create_board(slug="default", name="Test")
+        for i in range(3):
+            kb.create_task(conn, title=f"a{i}", assignee="alpha")
+    with kbc.connect_closing() as conn:
+        res = kbd.dispatch_once(conn, spawn_fn=_fake_spawn, dry_run=True)
+    assert len(res.spawned) == 3
+    assert res.skipped_per_profile_capped == []
+
+
 def test_capped_tasks_dispatched_on_subsequent_tick(isolated_kanban_home_with_profiles):
     """A task deferred this tick because its profile was at cap should be
     eligible for dispatch on the next tick (after running tasks complete).
